@@ -82,10 +82,7 @@ class LitellmLLMProvider(LLMProvider):
                     messages.extend(history_messages)
                 messages.append(message)
             else:
-                if history_messages:
-                    messages = history_messages + [message]
-                else:
-                    messages = [message]
+                messages = history_messages + [message] if history_messages else [message]
 
             openai_formatted_messages = [
                 _convert_message_to_openai_format(message) for message in messages
@@ -100,7 +97,7 @@ class LitellmLLMProvider(LLMProvider):
                 completion = await self._router.acompletion(
                     model=self._model,
                     messages=openai_formatted_messages,
-                    stream=streaming_callback is not None,
+                    stream=False,
                     mock_testing_fallbacks=self._enable_fallback_testing,
                     **generation_kwargs,
                 )
@@ -116,27 +113,18 @@ class LitellmLLMProvider(LLMProvider):
                     **generation_kwargs,
                 )
 
-            completions: List[ChatMessage] = []
-            if streaming_callback is not None:
-                num_responses = generation_kwargs.pop("n", 1)
-                if num_responses > 1:
-                    raise ValueError(
-                        "Cannot stream multiple responses, please set n=1."
-                    )
-                chunks: List[StreamingChunk] = []
+            completions = [
+                build_message(completion, choice) for choice in completion.choices
+            ]
 
-                async for chunk in completion:
-                    if chunk.choices and streaming_callback:
-                        chunk_delta: StreamingChunk = build_chunk(chunk)
-                        chunks.append(chunk_delta)
-                        streaming_callback(
-                            chunk_delta, query_id
-                        )  # invoke callback with the chunk_delta
-                completions = [connect_chunks(chunk, chunks)]
-            else:
-                completions = [
-                    build_message(completion, choice) for choice in completion.choices
-                ]
+            if streaming_callback is not None:
+                for message in completions:
+                    chunk = StreamingChunk(
+                        content=message.content,
+                        meta={"finish_reason": "stop"},
+                    )
+                    streaming_callback(chunk, query_id)
+                streaming_callback(StreamingChunk(content="", meta={"finish_reason": "stop"}), query_id)
 
             # before returning, do post-processing of the completions
             for response in completions:

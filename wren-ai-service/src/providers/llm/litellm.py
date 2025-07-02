@@ -112,7 +112,7 @@ class LitellmLLMProvider(LLMProvider):
                     api_version=self._api_version,
                     timeout=self._timeout,
                     messages=openai_formatted_messages,
-                    stream=streaming_callback is not None,
+                    stream=False,
                     **generation_kwargs,
                 )
 

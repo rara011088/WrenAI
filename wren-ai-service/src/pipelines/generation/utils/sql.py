@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import aiohttp
 import orjson
@@ -29,7 +29,7 @@ class SQLGenPostProcessor:
     async def run(
         self,
         replies: List[str] | List[List[str]],
-        timeout: Optional[float] = 30.0,
+        timeout: float = 30.0,
         project_id: str | None = None,
         use_dry_plan: bool = False,
         allow_dry_plan_fallback: bool = True,
@@ -206,6 +206,7 @@ TEXT_TO_SQL_RULES = """
 - DON'T USE '.' in column/table alias, replace '.' with '_' in column/table alias.
 - DON'T USE "FILTER(WHERE <expression>)" clause in the generated SQL query.
 - DON'T USE "EXTRACT(EPOCH FROM <expression>)" clause in the generated SQL query.
+- DON'T USE "EXTRACT()" function with INTERVAL data types as arguments
 - DON'T USE INTERVAL or generate INTERVAL-like expression in the generated SQL query.
 - Aggregate functions are not allowed in the WHERE clause. Instead, they belong in the HAVING clause, which is used to filter after aggregation.
 - ONLY USE JSON_QUERY for querying fields if "json_type":"JSON" is identified in the columns comment, NOT the deprecated JSON_EXTRACT_SCALAR function.
@@ -241,6 +242,14 @@ TEXT_TO_SQL_RULES = """
       - For Example: `SELECT p.column_1, j.column_2 FROM parent_table AS p, join_table AS j JOIN UNNEST(p.array_column) AS unnested(array_item) ON j.id = array_item.id`
 - DON'T USE JSON_QUERY and JSON_QUERY_ARRAY when "json_type":"".
 - DON'T USE LAX_BOOL, LAX_FLOAT64, LAX_INT64, LAX_STRING when "json_type":"".
+"""
+
+
+SQL_CORRECTION_EXAMPLES = """
+### SQL CORRECTION EXAMPLES ###
+- Original SQL: `SELECT 1 AS col ORDER BY col LIMIT 1 UNION ALL SELECT 2 AS col ORDER BY col LIMIT 1`
+  Error Message: io.trino.sql.parser.ParsingException: line 1:38: mismatched input 'UNION'. Expecting: '::', <EOF>
+  Corrected SQL: `(SELECT 1 AS col ORDER BY col LIMIT 1) UNION ALL (SELECT 2 AS col ORDER BY col LIMIT 1)`
 """
 
 sql_generation_system_prompt = f"""
@@ -456,9 +465,21 @@ SQL_GENERATION_MODEL_KWARGS = {
 }
 
 
-def construct_ask_history_messages(histories: list[AskHistory]) -> list[ChatMessage]:
+def construct_ask_history_messages(
+    histories: list[AskHistory] | list[dict],
+) -> list[ChatMessage]:
     messages = []
     for history in histories:
-        messages.append(ChatMessage.from_user(history.question))
-        messages.append(ChatMessage.from_assistant(history.sql))
+        messages.append(
+            ChatMessage.from_user(
+                history.question
+                if hasattr(history, "question")
+                else history["question"]
+            )
+        )
+        messages.append(
+            ChatMessage.from_assistant(
+                history.sql if hasattr(history, "sql") else history["sql"]
+            )
+        )
     return messages
